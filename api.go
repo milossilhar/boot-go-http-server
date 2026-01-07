@@ -256,9 +256,8 @@ func (ac *apiConfig) getChirpHandler(w http.ResponseWriter, r *http.Request) {
 
 func (ac *apiConfig) postLoginHandler(w http.ResponseWriter, r *http.Request) {
 	type loginDTO struct {
-		Email            string `json:"email"`
-		Password         string `json:"password"`
-		ExpiresInSeconds int32  `json:"expires_in"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -288,11 +287,72 @@ func (ac *apiConfig) postLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expirationIn := 1 * time.Hour
-	if decoded.ExpiresInSeconds > 0 && decoded.ExpiresInSeconds < 3600 {
-		expirationIn = time.Duration(decoded.ExpiresInSeconds) * time.Second
+	token, err := auth.MakeJWT(user.ID, ac.jwtSecret, "chirpy", 1*time.Second)
+	if err != nil {
+		log.Printf("Error creating JWT: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
 	}
-	token, err := auth.MakeJWT(user.ID, ac.jwtSecret, "chirpy", expirationIn)
+
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		log.Printf("Error creating refresh token: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+	_, err = ac.queries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:     refreshToken,
+		UserID:    user.ID,
+		ExpiresAt: time.Now().AddDate(0, 0, 60),
+	})
+	if err != nil {
+		log.Printf("Error saving refresh token: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	type response struct {
+		ID           string `json:"id"`
+		Email        string `json:"email"`
+		CreatedAt    string `json:"created_at"`
+		UpdatedAt    string `json:"updated_at"`
+		Token        string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	loginResponse := response{
+		ID:           user.ID.String(),
+		Email:        user.Email,
+		CreatedAt:    user.CreatedAt.Local().UTC().Format(time.RFC3339),
+		UpdatedAt:    user.UpdatedAt.Local().UTC().Format(time.RFC3339),
+		Token:        token,
+		RefreshToken: refreshToken,
+	}
+	respondWithJSON(w, http.StatusOK, loginResponse)
+}
+
+func (ac *apiConfig) postRefreshHandler(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("Error getting Bearer token: %v", err)
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
+	refreshToken, err := ac.queries.GetRefreshToken(r.Context(), token)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("Error getting refresh token: %v", err)
+		}
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
+	if refreshToken.RevokedAt.Valid || refreshToken.ExpiresAt.Before(time.Now()) {
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
+	token, err = auth.MakeJWT(refreshToken.UserID, ac.jwtSecret, "chirpy", 1*time.Hour)
 	if err != nil {
 		log.Printf("Error creating JWT: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
@@ -300,20 +360,33 @@ func (ac *apiConfig) postLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type response struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
-		Token     string `json:"token"`
+		Token string `json:"token"`
 	}
-	loginResponse := response{
-		ID:        user.ID.String(),
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Local().UTC().Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Local().UTC().Format(time.RFC3339),
-		Token:     token,
+	respondWithJSON(w, http.StatusOK, response{
+		Token: token,
+	})
+}
+
+func (ac *apiConfig) postRevokeHandler(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("Error getting Bearer token: %v", err)
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
 	}
-	respondWithJSON(w, http.StatusOK, loginResponse)
+
+	rows, err := ac.queries.RevokeRefreshToken(r.Context(), token)
+	if err != nil {
+		log.Printf("Error revoking refresh token: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+	if rows != 1 {
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (ac *apiConfig) registerAPI() http.Handler {
@@ -324,6 +397,8 @@ func (ac *apiConfig) registerAPI() http.Handler {
 
 	// auth
 	mux.HandleFunc("POST /login", ac.postLoginHandler)
+	mux.HandleFunc("POST /refresh", ac.postRefreshHandler)
+	mux.HandleFunc("POST /revoke", ac.postRevokeHandler)
 
 	// users
 	mux.HandleFunc("GET /users", ac.getAllUsersHandler)

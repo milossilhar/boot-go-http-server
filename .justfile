@@ -8,9 +8,12 @@ alias r := run
     go run .
 
 alias t := test
-alias tv := testv
+# runs tests
 @test:
     go test ./internal/auth
+
+alias tv := testv
+# run tests with verbose output
 @testv:
     go test -v ./internal/auth
 

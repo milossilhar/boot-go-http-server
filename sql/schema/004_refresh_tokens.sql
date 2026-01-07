@@ -10,6 +10,11 @@ CREATE TABLE refresh_tokens (
 
 CREATE INDEX refresh_tokens_user_id_idx ON refresh_tokens(user_id);
 
+-- forgot chirps index
+CREATE INDEX chirps_user_id_idx ON chirps(user_id);
+
 -- +goose Down
 DROP INDEX refresh_tokens_user_id_idx;
 DROP TABLE refresh_tokens;
+
+DROP INDEX chirps_user_id_idx;
