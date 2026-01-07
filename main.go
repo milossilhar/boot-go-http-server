@@ -26,6 +26,7 @@ func main() {
 	serverConfig := apiConfig{
 		environment:    env("ENVIRONMENT", "development"),
 		jwtSecret:      envRequired("JWT_SECRET"),
+		polkaKey:       envRequired("POLKA_KEY"),
 		queries:        database.New(db),
 		fileServerHits: atomic.Int32{},
 	}

@@ -19,6 +19,7 @@ import (
 type apiConfig struct {
 	environment    string
 	jwtSecret      string
+	polkaKey       string
 	queries        *database.Queries
 	fileServerHits atomic.Int32
 }
@@ -453,6 +454,18 @@ func (ac *apiConfig) postRevokeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ac *apiConfig) postPolkaWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	apiKey, err := auth.GetApiKey(r.Header)
+	if err != nil {
+		log.Printf("Error getting API key: %v", err)
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
+	if apiKey != ac.polkaKey {
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return
+	}
+
 	type polkaWebhookDTO struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -462,7 +475,7 @@ func (ac *apiConfig) postPolkaWebhookHandler(w http.ResponseWriter, r *http.Requ
 
 	decoder := json.NewDecoder(r.Body)
 	decoded := polkaWebhookDTO{}
-	err := decoder.Decode(&decoded)
+	err = decoder.Decode(&decoded)
 	if err != nil {
 		log.Printf("Error decoding JSON: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
