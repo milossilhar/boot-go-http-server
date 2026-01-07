@@ -23,14 +23,6 @@ type apiConfig struct {
 	fileServerHits atomic.Int32
 }
 
-func (ac *apiConfig) middlewareIncreaseHits(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
-		ac.fileServerHits.Add(1)
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (ac *apiConfig) metricsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -46,7 +38,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func (ac *apiConfig) createUserHandler(w http.ResponseWriter, r *http.Request) {
+func (ac *apiConfig) postUserHandler(w http.ResponseWriter, r *http.Request) {
 	type createUserDTO struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -92,6 +84,62 @@ func (ac *apiConfig) createUserHandler(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: user.UpdatedAt.Local().UTC().Format(time.RFC3339),
 	}
 	respondWithJSON(w, http.StatusCreated, createUserResponse)
+}
+
+func (ac *apiConfig) putUserHandler(w http.ResponseWriter, r *http.Request) {
+	userId, ok := r.Context().Value("userID").(uuid.UUID)
+	if !ok {
+		log.Printf("User ID not found in context")
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	type updateUserDTO struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	decoded := updateUserDTO{}
+	err := decoder.Decode(&decoded)
+	if err != nil {
+		log.Printf("Error decoding JSON: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(decoded.Password)
+	if err != nil {
+		log.Printf("Error hashing password: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	user, err := ac.queries.UpdateMyself(r.Context(), database.UpdateMyselfParams{
+		Email:          decoded.Email,
+		HashedPassword: hashedPassword,
+		ID:             userId,
+	})
+	if err != nil {
+		log.Printf("Error updating user: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	type response struct {
+		ID        string `json:"id"`
+		Email     string `json:"email"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	putUserResponse := response{
+		ID:        user.ID.String(),
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt.Local().UTC().Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Local().UTC().Format(time.RFC3339),
+	}
+	respondWithJSON(w, http.StatusOK, putUserResponse)
+
 }
 
 func (ac *apiConfig) getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
@@ -402,7 +450,8 @@ func (ac *apiConfig) registerAPI() http.Handler {
 
 	// users
 	mux.HandleFunc("GET /users", ac.getAllUsersHandler)
-	mux.HandleFunc("POST /users", ac.createUserHandler)
+	mux.HandleFunc("POST /users", ac.postUserHandler)
+	mux.HandleFunc("PUT /users", ac.middlewareAuthenticated(ac.putUserHandler))
 
 	// chirps
 	mux.HandleFunc("GET /chirps", ac.getAllChirpsHandler)
