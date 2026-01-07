@@ -1,0 +1,34 @@
+GET http://localhost:8080/api/healthz
+
+###
+GET http://localhost:8080/api/metrics
+
+###
+POST http://localhost:8080/api/validate_chirp
+Content-Type: application/json
+
+{
+    "body": "Hello World"
+}
+
+###
+POST http://localhost:8080/admin/reset
+
+
+###
+GET http://localhost:8080/api/users
+
+###
+POST http://localhost:8080/api/users
+Content-Type: application/json
+
+{
+    "email": "dugong@dugong.com"
+}
+
+
+###
+GET http://localhost:8080/api/chirps
+
+###
+GET http://localhost:8080/api/chirps/a4e6f121-faad-4324-b29c-4adba9103e06
