@@ -262,9 +262,25 @@ func (ac *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ac *apiConfig) getAllChirpsHandler(w http.ResponseWriter, r *http.Request) {
-	chirps, err := ac.queries.GetAllChirps(r.Context())
+	var chirps []database.Chirp
+	var err error
+
+	authorId := r.URL.Query().Get("author_id")
+	if authorId != "" {
+		authorUUID, err := uuid.Parse(authorId)
+		if err != nil {
+			log.Printf("Error parsing author UUID: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+			return
+		}
+
+		chirps, err = ac.queries.GetUserChirps(r.Context(), authorUUID)
+	} else {
+		chirps, err = ac.queries.GetAllChirps(r.Context())
+	}
+
 	if err != nil {
-		log.Printf("Error getting all chirps: %v", err)
+		log.Printf("Error getting chirps: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
 		return
 	}
@@ -460,7 +476,6 @@ func (ac *apiConfig) postPolkaWebhookHandler(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "Invalid token")
 		return
 	}
-
 	if apiKey != ac.polkaKey {
 		respondWithError(w, http.StatusUnauthorized, "Invalid token")
 		return
