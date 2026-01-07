@@ -71,19 +71,7 @@ func (ac *apiConfig) postUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type response struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
-	}
-	createUserResponse := response{
-		ID:        user.ID.String(),
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Local().UTC().Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Local().UTC().Format(time.RFC3339),
-	}
-	respondWithJSON(w, http.StatusCreated, createUserResponse)
+	respondWithJSON(w, http.StatusCreated, toUserDTO(user))
 }
 
 func (ac *apiConfig) putUserHandler(w http.ResponseWriter, r *http.Request) {
@@ -126,30 +114,28 @@ func (ac *apiConfig) putUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type response struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
-	}
-	putUserResponse := response{
-		ID:        user.ID.String(),
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Local().UTC().Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Local().UTC().Format(time.RFC3339),
-	}
-	respondWithJSON(w, http.StatusOK, putUserResponse)
+	respondWithJSON(w, http.StatusOK, toUserDTO(user))
+}
 
+type userDTO struct {
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	IsChirpyRed bool   `json:"is_chirpy_red"`
+}
+
+func toUserDTO(user database.User) userDTO {
+	return userDTO{
+		ID:          user.ID.String(),
+		Email:       user.Email,
+		CreatedAt:   user.CreatedAt.Local().UTC().Format(time.RFC3339),
+		UpdatedAt:   user.UpdatedAt.Local().UTC().Format(time.RFC3339),
+		IsChirpyRed: user.IsChirpyRed,
+	}
 }
 
 func (ac *apiConfig) getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
-	type userDTO struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		CreatedAt string `json:"created_at"`
-		UpdatedAt string `json:"updated_at"`
-	}
-
 	users, err := ac.queries.GetAllUsers(r.Context())
 	if err != nil {
 		log.Printf("Error getting all users: %v", err)
@@ -159,12 +145,7 @@ func (ac *apiConfig) getAllUsersHandler(w http.ResponseWriter, r *http.Request) 
 
 	response := make([]userDTO, len(users))
 	for i, user := range users {
-		response[i] = userDTO{
-			ID:        user.ID.String(),
-			Email:     user.Email,
-			CreatedAt: user.CreatedAt.Format(time.RFC3339),
-			UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
-		}
+		response[i] = toUserDTO(user)
 	}
 
 	respondWithJSON(w, http.StatusOK, response)
@@ -400,18 +381,12 @@ func (ac *apiConfig) postLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type response struct {
-		ID           string `json:"id"`
-		Email        string `json:"email"`
-		CreatedAt    string `json:"created_at"`
-		UpdatedAt    string `json:"updated_at"`
+		userDTO
 		Token        string `json:"token"`
 		RefreshToken string `json:"refresh_token"`
 	}
 	loginResponse := response{
-		ID:           user.ID.String(),
-		Email:        user.Email,
-		CreatedAt:    user.CreatedAt.Local().UTC().Format(time.RFC3339),
-		UpdatedAt:    user.UpdatedAt.Local().UTC().Format(time.RFC3339),
+		userDTO:      toUserDTO(user),
 		Token:        token,
 		RefreshToken: refreshToken,
 	}
@@ -477,6 +452,51 @@ func (ac *apiConfig) postRevokeHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (ac *apiConfig) postPolkaWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	type polkaWebhookDTO struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	decoded := polkaWebhookDTO{}
+	err := decoder.Decode(&decoded)
+	if err != nil {
+		log.Printf("Error decoding JSON: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	switch decoded.Event {
+	case "user.upgraded":
+		userUUID, err := uuid.Parse(decoded.Data.UserID)
+		if err != nil {
+			log.Printf("Error parsing user UUID: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+			return
+		}
+
+		affectedRows, err := ac.queries.UpdateToChirpyRed(r.Context(), userUUID)
+		if err != nil {
+			log.Printf("Error updating user to chirpy red: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+			return
+		}
+		if affectedRows != 1 {
+			respondWithError(w, http.StatusNotFound, "User not found")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	default:
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+}
+
 func (ac *apiConfig) registerAPI() http.Handler {
 	mux := http.NewServeMux()
 
@@ -498,6 +518,9 @@ func (ac *apiConfig) registerAPI() http.Handler {
 	mux.HandleFunc("GET /chirps/{chirpID}", ac.getChirpHandler)
 	mux.HandleFunc("POST /chirps", ac.postChirpHandler)
 	mux.HandleFunc("DELETE /chirps/{chirpID}", ac.middlewareAuthenticated(ac.deleteChirpHandler))
+
+	// webhooks
+	mux.HandleFunc("POST /polka/webhooks", ac.postPolkaWebhookHandler)
 
 	return mux
 }
