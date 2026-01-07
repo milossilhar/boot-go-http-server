@@ -191,7 +191,7 @@ func censorBadWords(chirp string) string {
 	return strings.Join(words, " ")
 }
 
-func (ac *apiConfig) createChirpHandler(w http.ResponseWriter, r *http.Request) {
+func (ac *apiConfig) postChirpHandler(w http.ResponseWriter, r *http.Request) {
 	type createChirpDTO struct {
 		Body string `json:"body"`
 	}
@@ -237,6 +237,46 @@ func (ac *apiConfig) createChirpHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	respondWithJSON(w, http.StatusCreated, toChirpDTO(chirp))
+}
+
+func (ac *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request) {
+	userId, ok := r.Context().Value("userID").(uuid.UUID)
+	if !ok {
+		log.Printf("User ID not found in context")
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+
+	chirpID, err := pathVariable(r, "chirpID", uuid.Parse)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Chirp ID is required")
+		return
+	}
+
+	chirp, err := ac.queries.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		switch err {
+		case sql.ErrNoRows:
+			respondWithError(w, http.StatusNotFound, "Chirp not found")
+		default:
+			log.Printf("Error getting chirp: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		}
+		return
+	}
+
+	if chirp.UserID != userId {
+		respondWithError(w, http.StatusForbidden, "You can only delete your own chirps")
+		return
+	}
+
+	_, err = ac.queries.DeleteChirp(r.Context(), chirpID)
+	if err != nil {
+		log.Printf("Error deleting chirp: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (ac *apiConfig) getAllChirpsHandler(w http.ResponseWriter, r *http.Request) {
@@ -456,7 +496,8 @@ func (ac *apiConfig) registerAPI() http.Handler {
 	// chirps
 	mux.HandleFunc("GET /chirps", ac.getAllChirpsHandler)
 	mux.HandleFunc("GET /chirps/{chirpID}", ac.getChirpHandler)
-	mux.HandleFunc("POST /chirps", ac.createChirpHandler)
+	mux.HandleFunc("POST /chirps", ac.postChirpHandler)
+	mux.HandleFunc("DELETE /chirps/{chirpID}", ac.middlewareAuthenticated(ac.deleteChirpHandler))
 
 	return mux
 }

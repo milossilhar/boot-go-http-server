@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,6 +26,16 @@ func respondWithJSON(w http.ResponseWriter, statusCode int, payload interface{})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)
 	w.Write([]byte(response))
+}
+
+func pathVariable[T any](r *http.Request, name string, conv func(string) (T, error)) (T, error) {
+	value := r.PathValue(name)
+	if value == "" {
+		var zero T
+		return zero, errors.New("missing path variable " + name)
+	}
+
+	return conv(value)
 }
 
 func env(key string, defaultValue string) string {

@@ -99,7 +99,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 
 const updateMyself = `-- name: UpdateMyself :one
 UPDATE users
-SET email = $1, hashed_password = $2
+SET email = $1, hashed_password = $2, updated_at = NOW()
 WHERE id = $3
 RETURNING id, email, created_at, updated_at, hashed_password
 `

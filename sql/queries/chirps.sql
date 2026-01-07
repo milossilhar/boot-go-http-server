@@ -12,5 +12,5 @@ SELECT * FROM chirps;
 -- name: GetUserChirps :many
 SELECT * FROM chirps WHERE user_id = $1;
 
--- name: DeleteUserChirps :execrows
-DELETE FROM chirps WHERE user_id = $1;
+-- name: DeleteChirp :execrows
+DELETE FROM chirps WHERE id = $1;
