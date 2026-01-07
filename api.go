@@ -279,6 +279,19 @@ func (ac *apiConfig) getAllChirpsHandler(w http.ResponseWriter, r *http.Request)
 		chirps, err = ac.queries.GetAllChirps(r.Context())
 	}
 
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "asc":
+		// do nothing
+		break
+	case "desc":
+		slices.Reverse(chirps)
+	default:
+		log.Printf("Invalid sort: %s", sort)
+		respondWithError(w, http.StatusBadRequest, "Invalid sort")
+		return
+	}
+
 	if err != nil {
 		log.Printf("Error getting chirps: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
